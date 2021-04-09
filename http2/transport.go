@@ -969,8 +969,8 @@ var errRequestCanceled = errors.New("net/http: request canceled")
 
 func commaSeparatedTrailers(req *http.Request) (string, error) {
 	keys := make([]string, 0, len(req.Trailer))
-	for k := range req.Trailer {
-		k = http.CanonicalHeaderKey(k)
+	for _, vv := range req.Trailer {
+		k := http.CanonicalHeaderKey(vv[0])
 		switch k {
 		case "Transfer-Encoding", "Trailer", "Content-Length":
 			return "", fmt.Errorf("invalid Trailer key %q", k)
@@ -1000,12 +1000,12 @@ func (cc *ClientConn) responseHeaderTimeout() time.Duration {
 // Certain headers are special-cased as okay but not transmitted later.
 func checkConnHeaders(req *http.Request) error {
 	if v := req.Header.Get("Upgrade"); v != "" {
-		return fmt.Errorf("http2: invalid Upgrade request header: %q", req.Header["Upgrade"])
+		return fmt.Errorf("http2: invalid Upgrade request header: %q", v)
 	}
-	if vv := req.Header["Transfer-Encoding"]; len(vv) > 0 && (len(vv) > 1 || vv[0] != "" && vv[0] != "chunked") {
+	if vv := req.Header.Get("Transfer-Encoding"); (len(vv) > 1 || vv != "" && vv != "chunked") {
 		return fmt.Errorf("http2: invalid Transfer-Encoding request header: %q", vv)
 	}
-	if vv := req.Header["Connection"]; len(vv) > 0 && (len(vv) > 1 || vv[0] != "" && !strings.EqualFold(vv[0], "close") && !strings.EqualFold(vv[0], "keep-alive")) {
+	if vv := req.Header.Get("Connection"); len(vv) > 0 && (len(vv) > 1 || vv != "" && !strings.EqualFold(vv, "close") && !strings.EqualFold(vv, "keep-alive")) {
 		return fmt.Errorf("http2: invalid Connection request header: %q", vv)
 	}
 	return nil
@@ -1498,15 +1498,15 @@ func (cc *ClientConn) encodeHeaders(req *http.Request, addGzipHeader bool, trail
 	// Check for any invalid headers and return an error before we
 	// potentially pollute our hpack state. (We want to be able to
 	// continue to reuse the hpack encoder for future requests)
-	for k, vv := range req.Header {
-		if !httpguts.ValidHeaderFieldName(k) {
-			return nil, fmt.Errorf("invalid HTTP header name %q", k)
+	for _, vv := range req.Header {
+		if !httpguts.ValidHeaderFieldName(vv[0]) {
+			return nil, fmt.Errorf("invalid HTTP header name %q", vv[0])
 		}
-		for _, v := range vv {
-			if !httpguts.ValidHeaderFieldValue(v) {
-				return nil, fmt.Errorf("invalid HTTP header value %q for header %q", v, k)
-			}
+	
+		if !httpguts.ValidHeaderFieldValue(vv[1]) {
+			return nil, fmt.Errorf("invalid HTTP header value %q for header %q", vv[1], vv[0])
 		}
+	
 	}
 
 	enumerateHeaders := func(f func(name, value string)) {
@@ -1530,20 +1530,20 @@ func (cc *ClientConn) encodeHeaders(req *http.Request, addGzipHeader bool, trail
 		}
 
 		var didUA bool
-		for k, vv := range req.Header {
-			if strings.EqualFold(k, "host") || strings.EqualFold(k, "content-length") {
+		for _, vv := range req.Header {
+			if strings.EqualFold(vv[0], "host") || strings.EqualFold(vv[0], "content-length") {
 				// Host is :authority, already sent.
 				// Content-Length is automatic, set below.
 				continue
-			} else if strings.EqualFold(k, "connection") || strings.EqualFold(k, "proxy-connection") ||
-				strings.EqualFold(k, "transfer-encoding") || strings.EqualFold(k, "upgrade") ||
-				strings.EqualFold(k, "keep-alive") {
+			} else if strings.EqualFold(vv[0], "connection") || strings.EqualFold(vv[0], "proxy-connection") ||
+				strings.EqualFold(vv[0], "transfer-encoding") || strings.EqualFold(vv[0], "upgrade") ||
+				strings.EqualFold(vv[0], "keep-alive") {
 				// Per 8.1.2.2 Connection-Specific Header
 				// Fields, don't send connection-specific
 				// fields. We have already checked if any
 				// are error-worthy so just ignore the rest.
 				continue
-			} else if strings.EqualFold(k, "user-agent") {
+			} else if strings.EqualFold(vv[0], "user-agent") {
 				// Match Go's http1 behavior: at most one
 				// User-Agent. If set to nil or empty string,
 				// then omit it. Otherwise if not mentioned,
@@ -1552,38 +1552,38 @@ func (cc *ClientConn) encodeHeaders(req *http.Request, addGzipHeader bool, trail
 				if len(vv) < 1 {
 					continue
 				}
-				vv = vv[:1]
-				if vv[0] == "" {
+				
+				if vv[1] == "" {
 					continue
 				}
-			} else if strings.EqualFold(k, "cookie") {
+			} else if strings.EqualFold(vv[0], "cookie") {
 				// Per 8.1.2.5 To allow for better compression efficiency, the
 				// Cookie header field MAY be split into separate header fields,
 				// each with one or more cookie-pairs.
-				for _, v := range vv {
-					for {
-						p := strings.IndexByte(v, ';')
-						if p < 0 {
-							break
-						}
-						f("cookie", v[:p])
+			
+				for {
+					p := strings.IndexByte(vv[1], ';')
+					if p < 0 {
+						break
+					}
+					f("cookie", vv[1][:p])
+					p++
+					// strip space after semicolon if any.
+					for p+1 <= len(vv[1]) && vv[1][p] == ' ' {
 						p++
-						// strip space after semicolon if any.
-						for p+1 <= len(v) && v[p] == ' ' {
-							p++
-						}
-						v = v[p:]
 					}
-					if len(v) > 0 {
-						f("cookie", v)
-					}
+					vv[1] = vv[1][p:]
 				}
+				if len(vv[1]) > 0 {
+					f("cookie", vv[1])
+				}
+			
 				continue
 			}
 
-			for _, v := range vv {
-				f(k, v)
-			}
+			
+			f(vv[0], vv[1])
+			
 		}
 		if shouldSendReqContentLength(req.Method, contentLength) {
 			f("content-length", strconv.FormatInt(contentLength, 10))
@@ -1652,23 +1652,23 @@ func (cc *ClientConn) encodeTrailers(req *http.Request) ([]byte, error) {
 	cc.hbuf.Reset()
 
 	hlSize := uint64(0)
-	for k, vv := range req.Trailer {
-		for _, v := range vv {
-			hf := hpack.HeaderField{Name: k, Value: v}
-			hlSize += uint64(hf.Size())
-		}
+	for _, vv := range req.Trailer {
+		
+		hf := hpack.HeaderField{Name: vv[0], Value: vv[1]}
+		hlSize += uint64(hf.Size())
+		
 	}
 	if hlSize > cc.peerMaxHeaderListSize {
 		return nil, errRequestHeaderListSize
 	}
 
-	for k, vv := range req.Trailer {
+	for _, vv := range req.Trailer {
 		// Transfer-Encoding, etc.. have already been filtered at the
 		// start of RoundTrip
-		lowKey := strings.ToLower(k)
-		for _, v := range vv {
-			cc.writeHeader(lowKey, v)
-		}
+		lowKey := strings.ToLower(vv[0])
+		
+		cc.writeHeader(lowKey, vv[1])
+		
 	}
 	return cc.hbuf.Bytes(), nil
 }
@@ -1983,24 +1983,24 @@ func (rl *clientConnReadLoop) handleResponse(cs *clientStream, f *MetaHeadersFra
 		if key == "Trailer" {
 			t := res.Trailer
 			if t == nil {
-				t = make(http.Header)
+				t = http.Header{}
 				res.Trailer = t
 			}
 			foreachHeaderElement(hf.Value, func(v string) {
-				t[http.CanonicalHeaderKey(v)] = nil
+				t.Add(http.CanonicalHeaderKey(v),"")
 			})
 		} else {
-			vv := header[key]
-			if vv == nil && len(strs) > 0 {
+			vv := header.Get(key)
+			if vv == "" && len(strs) > 0 {
 				// More than likely this will be a single-element key.
 				// Most headers aren't multi-valued.
 				// Set the capacity on strs[0] to 1, so any future append
 				// won't extend the slice into the other strings.
-				vv, strs = strs[:1:1], strs[1:]
-				vv[0] = hf.Value
-				header[key] = vv
+				vv, strs = strings.Join(strs[:1],""), strs[1:]
+				vv = hf.Value
+				header.Set(key,vv) 
 			} else {
-				header[key] = append(vv, hf.Value)
+				header.Add(key, vv + hf.Value) 
 			}
 		}
 	}
@@ -2012,7 +2012,7 @@ func (rl *clientConnReadLoop) handleResponse(cs *clientStream, f *MetaHeadersFra
 			return nil, errors.New("http2: too many 1xx informational responses")
 		}
 		if fn := cs.get1xxTraceFunc(); fn != nil {
-			if err := fn(statusCode, textproto.MIMEHeader(header)); err != nil {
+			if err := fn(statusCode, textproto.MIMEHeader(header.CreateMap())); err != nil {
 				return nil, err
 			}
 		}
@@ -2030,8 +2030,8 @@ func (rl *clientConnReadLoop) handleResponse(cs *clientStream, f *MetaHeadersFra
 	isHead := cs.req.Method == "HEAD"
 	if !streamEnded || isHead {
 		res.ContentLength = -1
-		if clens := res.Header["Content-Length"]; len(clens) == 1 {
-			if cl, err := strconv.ParseUint(clens[0], 10, 63); err == nil {
+		if clens := res.Header.Get("Content-Length"); len(clens) == 1 {
+			if cl, err := strconv.ParseUint(clens, 10, 63); err == nil {
 				res.ContentLength = int64(cl)
 			} else {
 				// TODO: care? unlike http/1, it won't mess up our framing, so it's
@@ -2080,10 +2080,10 @@ func (rl *clientConnReadLoop) processTrailers(cs *clientStream, f *MetaHeadersFr
 		return ConnectionError(ErrCodeProtocol)
 	}
 
-	trailer := make(http.Header)
+	trailer := http.Header{}
 	for _, hf := range f.RegularFields() {
 		key := http.CanonicalHeaderKey(hf.Name)
-		trailer[key] = append(trailer[key], hf.Value)
+		trailer.Add(key, hf.Value)
 	}
 	cs.trailer = trailer
 
@@ -2311,12 +2311,12 @@ func (rl *clientConnReadLoop) endStreamError(cs *clientStream, err error) {
 }
 
 func (cs *clientStream) copyTrailers() {
-	for k, vv := range cs.trailer {
+	for _, vv := range cs.trailer {
 		t := cs.resTrailer
 		if *t == nil {
-			*t = make(http.Header)
+			*t = http.Header{}
 		}
-		(*t)[k] = vv
+		(*t).Add(vv[0],vv[1])
 	}
 }
 
@@ -2612,7 +2612,7 @@ func (t *Transport) getBodyWriterState(cs *clientStream, body io.Reader) (s body
 	s.delay = t.expectContinueTimeout()
 	if s.delay == 0 ||
 		!httpguts.HeaderValuesContainsToken(
-			cs.req.Header["Expect"],
+			[]string{cs.req.Header.Get("Expect")},
 			"100-continue") {
 		return
 	}
@@ -2668,7 +2668,7 @@ func (s bodyWriterState) scheduleBodyWrite() {
 // isConnectionCloseRequest reports whether req should use its own
 // connection for a single request and then close the connection.
 func isConnectionCloseRequest(req *http.Request) bool {
-	return req.Close || httpguts.HeaderValuesContainsToken(req.Header["Connection"], "close")
+	return req.Close || httpguts.HeaderValuesContainsToken([]string{req.Header.Get("Connection")}, "close")
 }
 
 // registerHTTPSProtocol calls Transport.RegisterProtocol but

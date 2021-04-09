@@ -2562,7 +2562,7 @@ const TrailerPrefix = "Trailer:"
 // This method runs after the Handler is done and promotes any Header
 // fields to be trailers.
 func (rws *responseWriterState) promoteUndeclaredTrailers() {
-	for k, vv := range rws.handlerHeader {
+	for _, vv := range rws.handlerHeader {
 		if !strings.HasPrefix(vv[0], TrailerPrefix) {
 			continue
 		}

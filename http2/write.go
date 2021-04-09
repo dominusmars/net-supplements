@@ -340,7 +340,7 @@ func encodeHeaders(enc *hpack.Encoder, h http.Header, keys []string) {
 		keys = sorter.Keys(h)
 	}
 	for _, k := range keys {
-		vv := h[k]
+		vv := h.Get(k)
 		k = lowerHeader(k)
 		if !validWireHeaderFieldName(k) {
 			// Skip it as backup paranoia. Per
@@ -349,17 +349,17 @@ func encodeHeaders(enc *hpack.Encoder, h http.Header, keys []string) {
 			continue
 		}
 		isTE := k == "transfer-encoding"
-		for _, v := range vv {
-			if !httpguts.ValidHeaderFieldValue(v) {
+		
+			if !httpguts.ValidHeaderFieldValue(vv) {
 				// TODO: return an error? golang.org/issue/14048
 				// For now just omit it.
 				continue
 			}
 			// TODO: more of "8.1.2.2 Connection-Specific Header Fields"
-			if isTE && v != "trailers" {
+			if isTE && vv != "trailers" {
 				continue
 			}
-			encKV(enc, k, v)
-		}
+			encKV(enc, k, vv)
+		
 	}
 }
