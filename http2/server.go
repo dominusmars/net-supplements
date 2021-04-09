@@ -2563,12 +2563,12 @@ const TrailerPrefix = "Trailer:"
 // fields to be trailers.
 func (rws *responseWriterState) promoteUndeclaredTrailers() {
 	for k, vv := range rws.handlerHeader {
-		if !strings.HasPrefix(k, TrailerPrefix) {
+		if !strings.HasPrefix(vv[0], TrailerPrefix) {
 			continue
 		}
-		trailerKey := strings.TrimPrefix(k, TrailerPrefix)
+		trailerKey := strings.TrimPrefix(vv[0], TrailerPrefix)
 		rws.declareTrailer(trailerKey)
-		rws.handlerHeader[http.CanonicalHeaderKey(trailerKey)] = vv
+		rws.handlerHeader = append(rws.handlerHeader,[2]string{http.CanonicalHeaderKey(trailerKey), vv[1]} )
 	}
 
 	if len(rws.trailers) > 1 {
@@ -2623,7 +2623,7 @@ func (w *responseWriter) Header() http.Header {
 		panic("Header called after Handler finished")
 	}
 	if rws.handlerHeader == nil {
-		rws.handlerHeader = make(http.Header)
+		rws.handlerHeader = http.Header{}
 	}
 	return rws.handlerHeader
 }
@@ -2666,12 +2666,11 @@ func (rws *responseWriterState) writeHeader(code int) {
 }
 
 func cloneHeader(h http.Header) http.Header {
-	h2 := make(http.Header, len(h))
-	for k, vv := range h {
-		vv2 := make([]string, len(vv))
-		copy(vv2, vv)
-		h2[k] = vv2
+	if h == nil {
+		return nil
 	}
+	var h2 http.Header
+	h2 = append(h2, h...)
 	return h2
 }
 
@@ -2787,17 +2786,17 @@ func (w *responseWriter) Push(target string, opts *http.PushOptions) error {
 			return errors.New("URL must have a host")
 		}
 	}
-	for k := range opts.Header {
-		if strings.HasPrefix(k, ":") {
-			return fmt.Errorf("promised request headers cannot include pseudo header %q", k)
+	for _,vv := range opts.Header {
+		if strings.HasPrefix(vv[0], ":") {
+			return fmt.Errorf("promised request headers cannot include pseudo header %q", vv[0])
 		}
 		// These headers are meaningful only if the request has a body,
 		// but PUSH_PROMISE requests cannot have a body.
 		// http://tools.ietf.org/html/rfc7540#section-8.2
 		// Also disallow Host, since the promised URL must be absolute.
-		switch strings.ToLower(k) {
+		switch strings.ToLower(vv[0]) {
 		case "content-length", "content-encoding", "trailer", "te", "expect", "host":
-			return fmt.Errorf("promised request headers cannot include %q", k)
+			return fmt.Errorf("promised request headers cannot include %q", vv[0])
 		}
 	}
 	if err := checkValidHTTP2RequestHeaders(opts.Header); err != nil {
@@ -2958,12 +2957,11 @@ var connHeaders = []string{
 // The returned error is reported to users.
 func checkValidHTTP2RequestHeaders(h http.Header) error {
 	for _, k := range connHeaders {
-		if _, ok := h[k]; ok {
+		if ok := h.Has(k); ok {
 			return fmt.Errorf("request header %q is not valid in HTTP/2", k)
 		}
 	}
-	te := h["Te"]
-	if len(te) > 0 && (len(te) > 1 || (te[0] != "trailers" && te[0] != "")) {
+	if ok:= h.Has("Te"); ok {
 		return errors.New(`request header "TE" may only be "trailers" in HTTP/2`)
 	}
 	return nil
